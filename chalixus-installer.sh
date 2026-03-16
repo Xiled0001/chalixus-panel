@@ -98,8 +98,8 @@ echo "=> [2/9] Installing Composer..."
 curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
 
 # ── [3/9] Node.js & Yarn ──────────────────────────────────
-echo "=> [3/9] Installing Node.js (v20) & Yarn..."
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+echo "=> [3/9] Installing Node.js (v22) & Yarn..."
+curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
 apt -y install nodejs
 npm install -g yarn
 
@@ -124,7 +124,7 @@ chmod -R 755 storage/* bootstrap/cache/
 # ── [6/9] UI Assets & Dependencies ───────────────────────
 echo "=> [6/9] Compiling UI Assets & Installing Dependencies..."
 composer install --no-dev --optimize-autoloader
-yarn install
+yarn install --ignore-engines
 yarn build:production
 
 # ── [7/9] Environment & Migrations ───────────────────────
