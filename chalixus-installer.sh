@@ -37,6 +37,9 @@ echo "Detected OS: $OS_ID $VERSION_ID ($OS_CODENAME)"
 echo ""
 
 # --- Collect Information ---------------------------------
+# Read from /dev/tty directly so prompts work even when script is piped (curl | bash)
+exec < /dev/tty
+
 read -p "Enter your panel FQDN (e.g., panel.yourdomain.com): " FQDN
 read -p "Enter Let's Encrypt email (for SSL notifications): " SSL_EMAIL
 read -p "Enter the secure database password for the panel: " DB_PASSWORD
@@ -46,7 +49,16 @@ read -p "Enter initial admin email: " ADMIN_EMAIL
 read -p "Enter initial admin username: " ADMIN_USERNAME
 read -p "Enter initial admin first name: " ADMIN_FIRST
 read -p "Enter initial admin last name: " ADMIN_LAST
-read -p "Enter initial admin password: " ADMIN_PASSWORD
+read -s -p "Enter initial admin password: " ADMIN_PASSWORD
+echo ""
+
+# Validate required fields
+for var in FQDN SSL_EMAIL DB_PASSWORD ADMIN_EMAIL ADMIN_USERNAME ADMIN_FIRST ADMIN_LAST ADMIN_PASSWORD; do
+    if [ -z "${!var}" ]; then
+        echo "ERROR: $var cannot be empty."
+        exit 1
+    fi
+done
 echo ""
 
 # --- [1/9] System Dependencies ---------------------------
@@ -120,7 +132,14 @@ if [ ! -d "${PANEL_DIR}/.git" ]; then
 else
     git -C "$PANEL_DIR" pull
 fi
-chmod -R 755 "${PANEL_DIR}/storage/"* "${PANEL_DIR}/bootstrap/cache/"
+# Set permissions immediately so artisan/composer can write cache files
+mkdir -p "${PANEL_DIR}/storage/framework/sessions"
+mkdir -p "${PANEL_DIR}/storage/framework/views"
+mkdir -p "${PANEL_DIR}/storage/framework/cache"
+mkdir -p "${PANEL_DIR}/storage/logs"
+mkdir -p "${PANEL_DIR}/bootstrap/cache"
+chmod -R 755 "${PANEL_DIR}/storage" "${PANEL_DIR}/bootstrap/cache"
+chown -R www-data:www-data "${PANEL_DIR}/storage" "${PANEL_DIR}/bootstrap/cache"
 
 # --- [6/9] UI Assets & Dependencies ----------------------
 echo "=> [6/9] Compiling UI Assets & Installing Dependencies..."
@@ -136,10 +155,56 @@ yarn --cwd "$PANEL_DIR" build:production
 
 # --- [7/9] Environment & Migrations ----------------------
 echo "=> [7/9] Configuring Environment & Database Migrations..."
-cp "${PANEL_DIR}/.env.example" "${PANEL_DIR}/.env"
+# Use .env.example if present, otherwise write a base config directly
+if [ -f "${PANEL_DIR}/.env.example" ]; then
+    cp "${PANEL_DIR}/.env.example" "${PANEL_DIR}/.env"
+else
+    cat > "${PANEL_DIR}/.env" << ENVEOF
+APP_ENV=production
+APP_DEBUG=false
+APP_KEY=
+APP_THEME=pterodactyl
+APP_TIMEZONE=UTC
+APP_URL=http://panel.example.com
+APP_LOCALE=en
+APP_ENVIRONMENT_ONLY=true
+
+LOG_CHANNEL=daily
+LOG_DEPRECATIONS_CHANNEL=null
+LOG_LEVEL=debug
+
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=panel
+DB_USERNAME=pterodactyl
+DB_PASSWORD=
+
+REDIS_HOST=127.0.0.1
+REDIS_PASSWORD=null
+REDIS_PORT=6379
+
+CACHE_DRIVER=file
+QUEUE_CONNECTION=redis
+SESSION_DRIVER=file
+
+HASHIDS_SALT=
+HASHIDS_LENGTH=8
+
+MAIL_MAILER=smtp
+MAIL_HOST=smtp.example.com
+MAIL_PORT=25
+MAIL_USERNAME=
+MAIL_PASSWORD=
+MAIL_ENCRYPTION=tls
+MAIL_FROM_ADDRESS=no-reply@example.com
+MAIL_FROM_NAME="Pterodactyl Panel"
+ENVEOF
+    echo "WARNING: .env.example not found in repo, wrote default .env directly."
+fi
 php "${PANEL_DIR}/artisan" key:generate --force
 
-sed -i "s|APP_URL=http://localhost|APP_URL=https://${FQDN}|" "${PANEL_DIR}/.env"
+sed -i "s|APP_URL=.*|APP_URL=https://${FQDN}|" "${PANEL_DIR}/.env"
 sed -i "s/DB_PASSWORD=/DB_PASSWORD=${DB_PASSWORD}/" "${PANEL_DIR}/.env"
 sed -i "s/CACHE_DRIVER=file/CACHE_DRIVER=redis/" "${PANEL_DIR}/.env"
 sed -i "s/SESSION_DRIVER=file/SESSION_DRIVER=redis/" "${PANEL_DIR}/.env"
@@ -158,6 +223,7 @@ php "${PANEL_DIR}/artisan" p:user:make \
 
 echo "=> Setting Permissions..."
 chown -R www-data:www-data "$PANEL_DIR"
+chmod -R 755 "${PANEL_DIR}/storage" "${PANEL_DIR}/bootstrap/cache"
 
 # --- [8/9] Cron & Queue Worker ---------------------------
 echo "=> [8/9] Setting up Cron & Queue Worker..."
