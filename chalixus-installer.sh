@@ -13,11 +13,12 @@ echo ""
 # UPDATE THIS LINK ONCE YOU PUSH YOUR REPOSITORY TO GITHUB!
 # ---------------------------------------------------------
 GITHUB_REPO_URL="https://github.com/Xiled0001/chalixus-panel.git"
+PANEL_DIR="/var/www/pterodactyl"
 
-# ── OS Detection ──────────────────────────────────────────
+# --- OS Detection ----------------------------------------
 if [ -f /etc/os-release ]; then
     . /etc/os-release
-    OS_ID=$ID          # ubuntu | debian
+    OS_ID=$ID
     OS_CODENAME=$VERSION_CODENAME
 else
     echo "ERROR: Cannot detect OS. /etc/os-release not found."
@@ -35,7 +36,7 @@ esac
 echo "Detected OS: $OS_ID $VERSION_ID ($OS_CODENAME)"
 echo ""
 
-# Collect Information
+# --- Collect Information ---------------------------------
 read -p "Enter your panel FQDN (e.g., panel.yourdomain.com): " FQDN
 read -p "Enter Let's Encrypt email (for SSL notifications): " SSL_EMAIL
 read -p "Enter the secure database password for the panel: " DB_PASSWORD
@@ -48,7 +49,7 @@ read -p "Enter initial admin last name: " ADMIN_LAST
 read -p "Enter initial admin password: " ADMIN_PASSWORD
 echo ""
 
-# ── [1/9] System Dependencies ─────────────────────────────
+# --- [1/9] System Dependencies ---------------------------
 echo "=> [1/9] Installing system dependencies (Nginx, MariaDB, PHP 8.3, Redis)..."
 sleep 2
 
@@ -63,15 +64,13 @@ elif [ "$OS_ID" = "debian" ]; then
     echo "Adding sury.org PHP repository for Debian..."
     curl -sSLo /usr/share/keyrings/deb.sury.org-php.gpg \
         https://packages.sury.org/php/apt.gpg
-    echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] \
-https://packages.sury.org/php/ ${OS_CODENAME} main" \
+    echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ ${OS_CODENAME} main" \
         > /etc/apt/sources.list.d/php.list
 fi
 
 apt update
 
-# Install PHP packages individually — avoids brace-expansion failures
-# that occur when the PPA is not yet active at the time apt runs.
+# Install PHP packages individually to avoid brace-expansion failures
 apt -y install \
     php8.3 \
     php8.3-common \
@@ -93,29 +92,28 @@ apt -y install \
     certbot \
     python3-certbot-nginx
 
-# ── [2/9] Composer ────────────────────────────────────────
+# --- [2/9] Composer --------------------------------------
 echo "=> [2/9] Installing Composer..."
 curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
 
-# ── [3/9] Node.js & Yarn ──────────────────────────────────
+# --- [3/9] Node.js & Yarn --------------------------------
 echo "=> [3/9] Installing Node.js (v22) & Yarn..."
-# Remove any existing Node.js to prevent version conflicts
+# Remove any prior Node.js version to prevent version conflicts
 apt remove -y nodejs 2>/dev/null || true
 rm -f /etc/apt/sources.list.d/nodesource.list
 curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
 apt -y install nodejs
 npm install -g yarn
 
-# ── [4/9] Database ────────────────────────────────────────
+# --- [4/9] Database --------------------------------------
 echo "=> [4/9] Preparing Database..."
 mysql -e "CREATE USER IF NOT EXISTS 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '${DB_PASSWORD}';"
 mysql -e "CREATE DATABASE IF NOT EXISTS panel;"
 mysql -e "GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1' WITH GRANT OPTION;"
 mysql -e "FLUSH PRIVILEGES;"
 
-# ── [5/9] Clone Repository ────────────────────────────────
+# --- [5/9] Clone Repository ------------------------------
 echo "=> [5/9] Downloading Chalixus Panel from GitHub..."
-PANEL_DIR="/var/www/pterodactyl"
 mkdir -p "$PANEL_DIR"
 if [ ! -d "${PANEL_DIR}/.git" ]; then
     git clone "$GITHUB_REPO_URL" "$PANEL_DIR"
@@ -124,14 +122,19 @@ else
 fi
 chmod -R 755 "${PANEL_DIR}/storage/"* "${PANEL_DIR}/bootstrap/cache/"
 
-# ── [6/9] UI Assets & Dependencies ───────────────────────
+# --- [6/9] UI Assets & Dependencies ----------------------
 echo "=> [6/9] Compiling UI Assets & Installing Dependencies..."
 export COMPOSER_ALLOW_SUPERUSER=1
+
 composer install --no-dev --optimize-autoloader --working-dir="$PANEL_DIR"
+
+# The build script runs `cd public/assets` internally; the directory must exist first
+mkdir -p "${PANEL_DIR}/public/assets"
+
 yarn --cwd "$PANEL_DIR" install --ignore-engines
 yarn --cwd "$PANEL_DIR" build:production
 
-# ── [7/9] Environment & Migrations ───────────────────────
+# --- [7/9] Environment & Migrations ----------------------
 echo "=> [7/9] Configuring Environment & Database Migrations..."
 cp "${PANEL_DIR}/.env.example" "${PANEL_DIR}/.env"
 php "${PANEL_DIR}/artisan" key:generate --force
@@ -156,9 +159,9 @@ php "${PANEL_DIR}/artisan" p:user:make \
 echo "=> Setting Permissions..."
 chown -R www-data:www-data "$PANEL_DIR"
 
-# ── [8/9] Cron & Queue Worker ─────────────────────────────
+# --- [8/9] Cron & Queue Worker ---------------------------
 echo "=> [8/9] Setting up Cron & Queue Worker..."
-(crontab -l 2>/dev/null; echo "* * * * * php /var/www/pterodactyl/artisan schedule:run >> /dev/null 2>&1") | crontab -
+(crontab -l 2>/dev/null; echo "* * * * * php ${PANEL_DIR}/artisan schedule:run >> /dev/null 2>&1") | crontab -
 
 cat << 'EOF' > /etc/systemd/system/pteroq.service
 [Unit]
@@ -181,7 +184,7 @@ EOF
 systemctl enable --now pteroq.service
 systemctl enable --now redis-server
 
-# ── [9/9] SSL & Nginx ─────────────────────────────────────
+# --- [9/9] SSL & Nginx -----------------------------------
 echo "=> [9/9] Obtaining SSL Certificate and Configuring Nginx..."
 certbot --nginx -d "$FQDN" --non-interactive --agree-tos -m "$SSL_EMAIL"
 
