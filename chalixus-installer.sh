@@ -99,6 +99,9 @@ curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin
 
 # ── [3/9] Node.js & Yarn ──────────────────────────────────
 echo "=> [3/9] Installing Node.js (v22) & Yarn..."
+# Remove any existing Node.js to prevent version conflicts
+apt remove -y nodejs 2>/dev/null || true
+rm -f /etc/apt/sources.list.d/nodesource.list
 curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
 apt -y install nodejs
 npm install -g yarn
