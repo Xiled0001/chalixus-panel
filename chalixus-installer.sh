@@ -115,36 +115,37 @@ mysql -e "FLUSH PRIVILEGES;"
 
 # ── [5/9] Clone Repository ────────────────────────────────
 echo "=> [5/9] Downloading Chalixus Panel from GitHub..."
-mkdir -p /var/www/pterodactyl
-cd /var/www/pterodactyl
-if [ ! -d "/var/www/pterodactyl/.git" ]; then
-    git clone "$GITHUB_REPO_URL" .
+PANEL_DIR="/var/www/pterodactyl"
+mkdir -p "$PANEL_DIR"
+if [ ! -d "${PANEL_DIR}/.git" ]; then
+    git clone "$GITHUB_REPO_URL" "$PANEL_DIR"
 else
-    git pull
+    git -C "$PANEL_DIR" pull
 fi
-chmod -R 755 storage/* bootstrap/cache/
+chmod -R 755 "${PANEL_DIR}/storage/"* "${PANEL_DIR}/bootstrap/cache/"
 
 # ── [6/9] UI Assets & Dependencies ───────────────────────
 echo "=> [6/9] Compiling UI Assets & Installing Dependencies..."
-composer install --no-dev --optimize-autoloader
-yarn install --ignore-engines
-yarn build:production
+export COMPOSER_ALLOW_SUPERUSER=1
+composer install --no-dev --optimize-autoloader --working-dir="$PANEL_DIR"
+yarn --cwd "$PANEL_DIR" install --ignore-engines
+yarn --cwd "$PANEL_DIR" build:production
 
 # ── [7/9] Environment & Migrations ───────────────────────
 echo "=> [7/9] Configuring Environment & Database Migrations..."
-cp .env.example .env
-php artisan key:generate --force
+cp "${PANEL_DIR}/.env.example" "${PANEL_DIR}/.env"
+php "${PANEL_DIR}/artisan" key:generate --force
 
-sed -i "s|APP_URL=http://localhost|APP_URL=https://${FQDN}|" .env
-sed -i "s/DB_PASSWORD=/DB_PASSWORD=${DB_PASSWORD}/" .env
-sed -i "s/CACHE_DRIVER=file/CACHE_DRIVER=redis/" .env
-sed -i "s/SESSION_DRIVER=file/SESSION_DRIVER=redis/" .env
-sed -i "s/QUEUE_CONNECTION=sync/QUEUE_CONNECTION=redis/" .env
+sed -i "s|APP_URL=http://localhost|APP_URL=https://${FQDN}|" "${PANEL_DIR}/.env"
+sed -i "s/DB_PASSWORD=/DB_PASSWORD=${DB_PASSWORD}/" "${PANEL_DIR}/.env"
+sed -i "s/CACHE_DRIVER=file/CACHE_DRIVER=redis/" "${PANEL_DIR}/.env"
+sed -i "s/SESSION_DRIVER=file/SESSION_DRIVER=redis/" "${PANEL_DIR}/.env"
+sed -i "s/QUEUE_CONNECTION=sync/QUEUE_CONNECTION=redis/" "${PANEL_DIR}/.env"
 
-php artisan migrate --seed --force
+php "${PANEL_DIR}/artisan" migrate --seed --force
 
 echo "=> Creating Admin User..."
-php artisan p:user:make \
+php "${PANEL_DIR}/artisan" p:user:make \
     --email="${ADMIN_EMAIL}" \
     --username="${ADMIN_USERNAME}" \
     --name-first="${ADMIN_FIRST}" \
@@ -153,7 +154,7 @@ php artisan p:user:make \
     --admin=1
 
 echo "=> Setting Permissions..."
-chown -R www-data:www-data /var/www/pterodactyl/*
+chown -R www-data:www-data "$PANEL_DIR"
 
 # ── [8/9] Cron & Queue Worker ─────────────────────────────
 echo "=> [8/9] Setting up Cron & Queue Worker..."
